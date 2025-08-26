@@ -20,6 +20,50 @@ jobs:
         with:
           ref: dev
 
+            # 在“APK签名设置”之前加一个探测步骤
+      - name: Detect Android signing availability
+        id: signing
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          elif [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.STORE_PASSWORD }}" ] && [ -n "${{ secrets.KEY_PASSWORD }}" ] && [ -n "${{ secrets.KEY_ALIAS }}" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+
+      # APK签名设置（只有在 signing.enabled == true 时才执行）
+      - name: Download Android keystore
+        if: steps.signing.outputs.enabled == 'true'
+        id: android_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: keystore.jks
+          encodedString: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Create key.properties (signed)
+        if: steps.signing.outputs.enabled == 'true'
+        run: |
+          echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > simple_live_app/android/key.properties
+          echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
+
+      # 没有 secrets 的情况下生成一个临时 keystore（仅测试/CI 用）
+      - name: Create key.properties with temp keystore (no secrets)
+        if: steps.signing.outputs.enabled != 'true'
+        run: |
+          cd simple_live_app/android
+          keytool -genkeypair -v -keystore temp-release.jks -storetype JKS \
+            -keyalg RSA -keysize 2048 -validity 10000 -alias temp \
+            -dname "CN=CI, OU=CI, O=CI, L=SG, S=SG, C=SG" \
+            -storepass ci-pass -keypass ci-pass
+          echo "storeFile=$(pwd)/temp-release.jks" > key.properties
+          echo "storePassword=ci-pass" >> key.properties
+          echo "keyPassword=ci-pass" >> key.properties
+          echo "keyAlias=temp" >> key.properties
+
+
       # APK签名设置
       - name: Download Android keystore
         id: android_keystore
